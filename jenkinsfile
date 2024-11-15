@@ -1,0 +1,76 @@
+pipeline {
+    agent any
+    environment {
+        DOCKER_IMAGE = "aapka-dockerhub-username/aapka-image-name"  // Docker Hub par image ka naam
+        VERSION = "${env.BUILD_NUMBER}"                             // Har build ke liye version number
+        DOCKER_CREDENTIALS_ID = "dockerhub-credentials"             // Docker Hub ke credentials ka ID
+        GITHUB_CREDENTIALS_ID = "github-access-token"               // GitHub ke credentials ka ID
+        CONTAINER_NAME = "aapka-container-name"                     // Container ka specific naam
+        LOG_DIR = "/path/to/log/directory"                          // Local directory jahan logs save honge
+    }
+    stages {
+        stage('Checkout Code') {
+            steps {
+                // Private GitHub repo se code pull karega
+                git url: 'https://github.com/username/repository.git',
+                    credentialsId: "${GITHUB_CREDENTIALS_ID}"       // GitHub token ya SSH key ka credentials ID
+            }
+        }
+        stage('Build Docker Image') {
+            steps {
+                script {
+                    // Naye version ke sath Docker image build karega
+                    sh "docker build -t ${DOCKER_IMAGE}:${VERSION} ."
+                }
+            }
+        }
+        stage('Push Docker Image to Docker Hub') {
+            steps {
+                script {
+                    docker.withRegistry('', DOCKER_CREDENTIALS_ID) {
+                        // Docker image ko Docker Hub par push karega
+                        sh "docker push ${DOCKER_IMAGE}:${VERSION}"
+                    }
+                }
+            }
+        }
+        stage('Cleanup Old Docker Images') {
+            steps {
+                script {
+                    // Purani images aur containers ko clean karega
+                    sh """
+                    docker system prune -f
+                    docker images -q ${DOCKER_IMAGE} | tail -n +2 | xargs -r docker rmi -f
+                    """
+                }
+            }
+        }
+        stage('Deploy New Container Locally') {
+            steps {
+                script {
+                    // Agar purana container run ho raha hai to usse stop aur remove karega
+                    sh """
+                    docker stop ${CONTAINER_NAME} || true
+                    docker rm ${CONTAINER_NAME} || true
+                    """
+                    // Naye version ki image ke sath naya container run karega aur logs directory ko mount karega
+                    sh "docker run -d --name ${CONTAINER_NAME} -v ${LOG_DIR}:/logs ${DOCKER_IMAGE}:${VERSION}"
+                }
+            }
+        }
+        stage('Save Logs Locally') {
+            steps {
+                script {
+                    // Container logs ko local directory me save karega
+                    sh "docker logs ${CONTAINER_NAME} > ${LOG_DIR}/${CONTAINER_NAME}-${VERSION}.log"
+                }
+            }
+        }
+    }
+    post {
+        always {
+            // Workspace ko clean karega
+            cleanWs()
+        }
+    }
+}
