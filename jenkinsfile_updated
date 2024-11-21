@@ -1,87 +1,65 @@
 pipeline {
     agent any
     environment {
-        DOCKER_IMAGE = "mohitgaur1272/local_practice"  // Docker Hub par image ka naam
-        VERSION = "${env.BUILD_NUMBER}"                             // Har build ke liye version number
-        DOCKER_CREDENTIALS_ID = "dockerhub-credentials"             // Docker Hub ke credentials ka ID
-        //GITHUB_CREDENTIALS_ID = "github-access-token"               // GitHub ke credentials ka ID
-        CONTAINER_NAME = "demo_container"                     // Container ka specific naam
-        LOG_DIR = "/home/ubuntu/docker/logs"                          // Local directory jahan logs save honge
+        DOCKER_IMAGE = "mohitgaur1272/local_practice"  // Docker image name
+        VERSION = "${env.BUILD_NUMBER}"              // Unique version for every build
+        DOCKER_CREDENTIALS_ID = "dockerhub-credentials" // Docker Hub credentials ID
+        CONTAINER_NAME = "demo_container"            // Container name
     }
     stages {
         stage('Checkout Code') {
             steps {
-                // Private GitHub repo se code pull karega
+                // Pull code from repository
                 git branch: 'main', url: 'https://github.com/mohitgaur1272/docker_deployment_cicd.git'
-                //git url: 'https://github.com/mohitgaur1272/docker_deployment_cicd.git',
-                    //credentialsId: "${GITHUB_CREDENTIALS_ID}"       // GitHub token ya SSH key ka credentials ID
             }
         }
         stage('Build Docker Image') {
             steps {
                 script {
-                    // Naye version ke sath Docker image build karega
-                    sh "DOCKER_BUILDKIT=1 docker build -t ${DOCKER_IMAGE}:${VERSION} ."
+                    // Build Docker image with the current version
+                    sh "docker build -t ${DOCKER_IMAGE}:${VERSION} ."
                 }
             }
         }
         stage('Push Docker Image to Docker Hub') {
             steps {
                 script {
-                    // Docker Hub par login aur image push karega
-                    sh 'docker login -u ${DOCKER_USERNAME} -p ${DOCKER_PASSWORD}'
-                    sh "docker push ${DOCKER_IMAGE}:${VERSION}"
+                    // Log in to Docker Hub and push the image
+                    withCredentials([usernamePassword(credentialsId: "${DOCKER_CREDENTIALS_ID}", usernameVariable: 'DOCKER_USERNAME', passwordVariable: 'DOCKER_PASSWORD')]) {
+                        sh 'docker login -u $DOCKER_USERNAME -p $DOCKER_PASSWORD'
+                        sh "docker push ${DOCKER_IMAGE}:${VERSION}"
+                    }
                 }
             }
         }
-
-        #stage('Push Docker Image to Docker Hub') {
-        #    steps {
-        #        script {
-        #            docker.withRegistry('', DOCKER_CREDENTIALS_ID) {
-        #                // Docker image ko Docker Hub par push karega
-        #                sh "docker push ${DOCKER_IMAGE}:${VERSION}"
-        #            }
-        #        }
-        #    }
-        #}
-
-        stage('Cleanup Old Docker Images') {
+        stage('delete old conatiner') {
             steps {
                 script {
-                    // Purani images aur containers ko clean karega
-                    sh """
-                    docker system prune -f
-                    docker images -q ${DOCKER_IMAGE} | tail -n +2 | xargs -r docker rmi -f
-                    """
+                    //delete old_container 
+                    sh "docker rm -f ${CONTAINER_NAME}"
+                }
+            }
+        }    
+        stage('Deploy New Container') {
+            steps {
+                script {
+                    // Run a new container with the latest image
+                    sh "docker run -d --name ${CONTAINER_NAME} -p 82:80 ${DOCKER_IMAGE}:${VERSION}"
                 }
             }
         }
-        stage('Deploy New Container Locally') {
+        stage('delete unnassary image'){
             steps {
                 script {
-                    // Agar purana container run ho raha hai to usse stop aur remove karega
-                    sh """
-                    docker stop ${CONTAINER_NAME} || true
-                    docker rm ${CONTAINER_NAME} || true
-                    """
-                    // Naye version ki image ke sath naya container run karega aur logs directory ko mount karega
-                    sh "docker run -d --name ${CONTAINER_NAME} -v ${LOG_DIR}:/logs -p 82:80 ${DOCKER_IMAGE}:${VERSION}"
-                }
-            }
-        }
-        stage('Save Logs Locally') {
-            steps {
-                script {
-                    // Container logs ko local directory me save karega
-                    sh "docker logs ${CONTAINER_NAME} > ${LOG_DIR}/${CONTAINER_NAME}-${VERSION}.log"
+                    //delete unusefull image from local 
+                    sh "docker rmi -f \$(docker images | grep '${DOCKER_IMAGE}' | awk '{print \$3}') || true"
                 }
             }
         }
     }
     post {
         always {
-            // Workspace ko clean karega
+            // Clean workspace after build
             cleanWs()
         }
     }
